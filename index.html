@@ -59,9 +59,6 @@
       <button onclick="setFloorMode('xray')" id="btn-xray" class="px-3 py-1.5 rounded-lg text-xs font-medium transition text-amber-300 hover:text-amber-200">
         Pillars
       </button>
-      <button onclick="toggleBlueprintOverlay()" id="btn-bp" class="px-3 py-1.5 rounded-lg text-xs font-medium transition text-emerald-400 hover:text-emerald-300 border border-emerald-500/30">
-        2D Lines
-      </button>
     </div>
 
     <div class="hidden sm:block h-5 w-px bg-slate-700/70"></div>
@@ -130,11 +127,10 @@
 // ============================================================================
 
 let scene, camera, renderer, controls;
-let gfGroup, ffGroup, roofGroup, columnGroup, blueprintGroup;
+let gfGroup, ffGroup, roofGroup, columnGroup;
 let scalableWalls = [];
 let transparentWalls = [];
 let currentMode = 'gf';
-let blueprintVisible = false;
 let explodeAmount = 0;
 
 const mats = {};
@@ -189,16 +185,13 @@ function init() {
   ffGroup = new THREE.Group();
   roofGroup = new THREE.Group();
   columnGroup = new THREE.Group();
-  blueprintGroup = new THREE.Group();
 
   scene.add(gfGroup);
   scene.add(ffGroup);
   scene.add(roofGroup);
   scene.add(columnGroup);
-  scene.add(blueprintGroup);
 
   buildSiteAndPlot();
-  build2DBlueprintOverlay();
   buildGroundFloor();
   buildFirstFloor();
   buildRoof();
@@ -261,52 +254,7 @@ function buildSiteAndPlot() {
 }
 
 // ============================================================================
-// 2. EXACT 2D BLUEPRINT OVERLAY LINES ON SLAB
-// ============================================================================
-function build2DBlueprintOverlay() {
-  const yLine = 1.65;
-  const lineMat = new THREE.LineBasicMaterial({ color: 0x10b981, linewidth: 2 });
-  const dashMat = new THREE.LineBasicMaterial({ color: 0xfacc15, linewidth: 1.5 });
-
-  function drawLine(x1, z1, x2, z2, mat = lineMat) {
-    const pts = [new THREE.Vector3(x1, yLine, z1), new THREE.Vector3(x2, yLine, z2)];
-    const geo = new THREE.BufferGeometry().setFromPoints(pts);
-    blueprintGroup.add(new THREE.Line(geo, mat));
-  }
-
-  // Outer Building Footprint (X: -12.12 to +12.11, Z: -27.0 to +25.83)
-  drawLine(-12.12, -27.0, 12.11, -27.0);
-  drawLine(-12.12, 25.83, 12.11, 25.83, dashMat);
-  drawLine(-12.12, -27.0, -12.12, 25.83);
-  drawLine(12.11, -27.0, 12.11, 25.83);
-
-  // Transverse Bay Lines: Z = -12.0, Z = 0.0, Z = +8.68, Z = +20.83, Z = +25.83
-  drawLine(-12.12, -12.0, 12.11, -12.0);
-  drawLine(-12.12, 0.0, 0.11, 0.0); // Dining / Kitchen wall
-  drawLine(-12.12, 8.68, 12.11, 8.68); // Front wall of Kitchen / Puja / Hall
-  drawLine(-12.12, 20.83, 12.11, 20.83); // 12'-02" Slab line
-
-  // Bay 1: Rear M.Bedroom (Left) & Two 6'x5' Toilets + Bedroom (Right)
-  drawLine(0.11, -27.0, 0.11, -12.0);
-  drawLine(0.11, -22.0, 12.11, -22.0);
-  drawLine(6.11, -27.0, 6.11, -22.0);
-
-  // Bay 2: Left U-Staircase & Dining + Center Archway
-  drawLine(0.11, -12.0, 0.11, 0.0, dashMat);
-  drawLine(-10.12, -9.5, -4.8, -9.5, dashMat);
-  drawLine(-10.12, -2.5, -4.8, -2.5, dashMat);
-  drawLine(-10.12, -9.5, -10.12, -2.5, dashMat);
-
-  // Bay 3: Kitchen (8'-0") & Puja (4'-2 3/4")
-  drawLine(0.11, 0.0, 0.11, 8.68);
-  drawLine(-4.12, 3.0, -4.12, 8.68);
-  drawLine(-4.12, 3.0, 0.11, 3.0);
-
-  blueprintGroup.visible = false;
-}
-
-// ============================================================================
-// 3. GROUND FLOOR (FAITHFUL TO LATEST SKETCH)
+// 2. GROUND FLOOR (FAITHFUL TO LATEST SKETCH)
 // ============================================================================
 function buildGroundFloor() {
   const y0 = 1.5;
@@ -417,7 +365,7 @@ function buildGroundFloor() {
 }
 
 // ============================================================================
-// 4. STAIRCASE (SOUTH LEFT BAY) & FURNITURE
+// 3. STAIRCASE (SOUTH LEFT BAY) & FURNITURE
 // ============================================================================
 function buildGroundFloorInteriors(y0) {
   const stepMat = new THREE.MeshStandardMaterial({ color: 0xfde68a, roughness: 0.38 });
@@ -482,7 +430,7 @@ function buildGroundFloorInteriors(y0) {
 }
 
 // ============================================================================
-// 5. FIRST FLOOR (+1 LEVEL) & FRONT SLAB TERRACE
+// 4. FIRST FLOOR (+1 LEVEL) & FRONT SLAB TERRACE
 // ============================================================================
 function buildFirstFloor() {
   const yFF = 11.5;
@@ -561,7 +509,7 @@ function buildFirstFloor() {
 }
 
 // ============================================================================
-// 6. ROOF & PORTICO PILLARS SUPPORTING THE 12'-02" & 5'-00" SLABS
+// 5. ROOF & PORTICO PILLARS SUPPORTING THE 12'-02" & 5'-00" SLABS
 // ============================================================================
 function buildRoof() {
   const yR = 21.5;
@@ -577,7 +525,7 @@ function buildRoof() {
 }
 
 // ============================================================================
-// 7. STRUCTURAL PILLARS (MATCHING THE CIRCLED DOTS ⊙ ON THE DRAWING)
+// 6. STRUCTURAL PILLARS (MATCHING THE CIRCLED DOTS ⊙ ON THE DRAWING)
 // ============================================================================
 function buildStructuralColumns() {
   // Primary 3-Column X Grid: Left (-12.12), Center (+0.11), Right (+12.11)
@@ -603,7 +551,7 @@ function buildStructuralColumns() {
 }
 
 // ============================================================================
-// 8. GEOMETRY & UI HELPERS
+// 7. GEOMETRY & UI HELPERS
 // ============================================================================
 function addArchWall(group, x1, z1, x2, z2, yBase, height, thickness, material, openings = []) {
   const length = Math.hypot(x2 - x1, z2 - z1);
@@ -716,7 +664,7 @@ function addBox(parent, w, h, d, x, y, z, mat) {
 }
 
 // ============================================================================
-// 9. INTERACTIVE CONTROLS
+// 8. INTERACTIVE CONTROLS
 // ============================================================================
 function setFloorMode(mode) {
   currentMode = mode;
@@ -740,20 +688,6 @@ function setFloorMode(mode) {
   columnGroup.visible = isXray;
 }
 
-function toggleBlueprintOverlay() {
-  blueprintVisible = !blueprintVisible;
-  blueprintGroup.visible = blueprintVisible;
-  const btn = document.getElementById('btn-bp');
-  if (blueprintVisible) {
-    btn.className = 'px-3 py-1.5 rounded-lg text-xs font-medium transition bg-emerald-500 text-slate-950 shadow';
-    updateWallHeight(0.22);
-    document.getElementById('wall-slider').value = 0.22;
-  } else {
-    btn.className = 'px-3 py-1.5 rounded-lg text-xs font-medium transition text-emerald-400 hover:text-emerald-300 border border-emerald-500/30';
-    updateWallHeight(1.0);
-    document.getElementById('wall-slider').value = 1.0;
-  }
-}
 
 function updateWallHeight(val) {
   const s = parseFloat(val);
