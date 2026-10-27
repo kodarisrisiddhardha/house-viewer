@@ -1,0 +1,804 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>3D Viewer</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    body {
+      font-family: 'Inter', sans-serif;
+      background-color: #0b111e;
+      color: #f8fafc;
+      overflow: hidden;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+    }
+    #canvas-container {
+      position: absolute;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 1;
+    }
+    .glass-dock {
+      background: rgba(15, 23, 42, 0.82);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border: 1px solid rgba(51, 65, 85, 0.65);
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+    }
+    input[type=range] {
+      accent-color: #38bdf8;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 3D WEBGL VIEWPORT -->
+  <div id="canvas-container"></div>
+
+  <!-- CLEAN MINIMALIST BOTTOM CONTROL BAR (NO TITLES, NO SUN SLIDER) -->
+  <div class="fixed bottom-5 left-1/2 -translate-x-1/2 z-30 flex flex-wrap items-center justify-center gap-3 px-4 py-2.5 rounded-2xl glass-dock max-w-[96vw]">
+    
+    <!-- View Modes -->
+    <div class="flex items-center gap-1 bg-slate-900/90 p-1 rounded-xl border border-slate-800">
+      <button onclick="setFloorMode('gf')" id="btn-gf" class="px-3 py-1.5 rounded-lg text-xs font-medium transition bg-sky-500 text-slate-950 shadow">
+        Ground
+      </button>
+      <button onclick="setFloorMode('ff')" id="btn-ff" class="px-3 py-1.5 rounded-lg text-xs font-medium transition text-slate-300 hover:text-white">
+        First (+1)
+      </button>
+      <button onclick="setFloorMode('full')" id="btn-full" class="px-3 py-1.5 rounded-lg text-xs font-medium transition text-slate-300 hover:text-white">
+        Full
+      </button>
+      <button onclick="setFloorMode('xray')" id="btn-xray" class="px-3 py-1.5 rounded-lg text-xs font-medium transition text-amber-300 hover:text-amber-200">
+        Pillars
+      </button>
+      <button onclick="toggleBlueprintOverlay()" id="btn-bp" class="px-3 py-1.5 rounded-lg text-xs font-medium transition text-emerald-400 hover:text-emerald-300 border border-emerald-500/30">
+        2D Lines
+      </button>
+    </div>
+
+    <div class="hidden sm:block h-5 w-px bg-slate-700/70"></div>
+
+    <!-- Wall & Explode Sliders -->
+    <div class="flex items-center gap-4 px-1">
+      <div class="flex items-center gap-2">
+        <span class="text-[11px] font-medium text-slate-400">Walls</span>
+        <input id="wall-slider" type="range" min="0.15" max="1" step="0.05" value="1" oninput="updateWallHeight(this.value)" class="w-20 h-1.5 bg-slate-700 rounded-lg cursor-pointer" />
+      </div>
+
+      <div class="flex items-center gap-2">
+        <span class="text-[11px] font-medium text-slate-400">Split</span>
+        <input id="explode-slider" type="range" min="0" max="18" step="0.5" value="0" oninput="updateExplode(this.value)" class="w-20 h-1.5 bg-slate-700 rounded-lg cursor-pointer" />
+      </div>
+    </div>
+
+    <div class="hidden sm:block h-5 w-px bg-slate-700/70"></div>
+
+    <!-- Camera Presets -->
+    <div class="flex items-center gap-1.5">
+      <button onclick="setCam('iso')" class="px-2.5 py-1.5 rounded-lg bg-slate-800/90 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-slate-700 transition">
+        3D
+      </button>
+      <button onclick="setCam('top')" class="px-2.5 py-1.5 rounded-lg bg-slate-800/90 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-slate-700 transition">
+        Top
+      </button>
+      <button onclick="setCam('front')" class="px-2.5 py-1.5 rounded-lg bg-slate-800/90 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-slate-700 transition">
+        Front
+      </button>
+      <button onclick="setCam('rear')" class="px-2.5 py-1.5 rounded-lg bg-slate-800/90 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-slate-700 transition">
+        Back
+      </button>
+    </div>
+
+  </div>
+
+<script>
+// ============================================================================
+// EXACT COORDINATE GEOMETRY FOR LATEST HAND-DRAWN FLOOR PLAN
+// Plot: 30'-0" Wide (X: -15.0 South/Left to +15.0 North/Right)
+//       60'-0" Long (Z: -30.0 West/Top Rear to +30.0 East/Bottom Front Road)
+//
+// Building Envelope Width: 24'-2 3/4" (24.23 ft -> X: -12.12 to +12.11)
+// Center Longitudinal Spine: X = +0.11
+//   - Left Side (South, दക്ഷിణం): 12'-2 3/4" wide (X: -12.12 to +0.11)
+//   - Right Side (North, ఉత్తరం): 12'-00" wide (X: +0.11 to +12.11)
+//
+// Longitudinal Bays from Top (West Z = -27.0) to Bottom (East Z = +25.83):
+// 1. REAR BAY (Z: -27.0 to -12.0, length = 15'-00"):
+//    - Left (SW): M. Bedroom (12'-2 3/4" x 15'-00")
+//    - Right (NW): Two 6'-00" x 5'-00" Toilets at the top rear (Z: -27.0 to -22.0)
+//                  + Bedroom below them (12'-00" x 10'-00", Z: -22.0 to -12.0)
+// 2. MIDDLE BAY (Z: -12.0 to 0.0, length = 12'-00"):
+//    - Left (South): U-Shaped Staircase along South wall + Dining area
+//    - Center Spine (X = +0.11): Open Archway ("Arch") between Dining and Hall
+//    - Right (North): Hall (12'-00" W, continuous with front bay)
+// 3. KITCHEN / PUJA / HALL BAY (Z: 0.0 to +8.68, length = 8'-08 1/8"):
+//    - Left (South): Kitchen (8'-00" W x 8'-08 1/8" L, X: -12.12 to -4.12)
+//                    + Puja Room (4'-2 3/4" W x ~5'-6" L, X: -4.12 to +0.11)
+//    - Right (North): Hall continuation (12'-00" W x 8'-08 1/8" L, X: +0.11 to +12.11)
+//      (Total continuous Hall on North side = 12'-00" W x 20'-08 1/8" L)
+// 4. FRONT SLAB / PORTICO BAYS (Z: +8.68 to +25.83, total = 17'-02"):
+//    - Inner Slab Bay (Z: +8.68 to +20.83, length = 12'-02", full width 24'-2 3/4")
+//    - Outer Cantilever/Front Slab Strip (Z: +20.83 to +25.83, length = 5'-00", full width 24'-2 3/4")
+// ============================================================================
+
+let scene, camera, renderer, controls;
+let gfGroup, ffGroup, roofGroup, columnGroup, blueprintGroup;
+let scalableWalls = [];
+let transparentWalls = [];
+let currentMode = 'gf';
+let blueprintVisible = false;
+let explodeAmount = 0;
+
+const mats = {};
+
+function init() {
+  const container = document.getElementById('canvas-container');
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x0b111e);
+
+  camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 1, 1000);
+  camera.position.set(0, 68, 58);
+
+  renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  container.appendChild(renderer.domElement);
+
+  controls = new THREE.OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.05;
+  controls.maxPolarAngle = Math.PI / 2 - 0.02;
+  controls.target.set(0, 4, -2);
+
+  // Balanced, crisp studio lighting (no sun slider needed)
+  const hemi = new THREE.HemisphereLight(0xffffff, 0x334155, 0.85);
+  scene.add(hemi);
+
+  const mainLight = new THREE.DirectionalLight(0xffffff, 0.95);
+  mainLight.position.set(35, 75, 45);
+  mainLight.castShadow = true;
+  mainLight.shadow.mapSize.width = 2048;
+  mainLight.shadow.mapSize.height = 2048;
+  mainLight.shadow.camera.near = 10;
+  mainLight.shadow.camera.far = 200;
+  const d = 45;
+  mainLight.shadow.camera.left = -d;
+  mainLight.shadow.camera.right = d;
+  mainLight.shadow.camera.top = d;
+  mainLight.shadow.camera.bottom = -d;
+  mainLight.shadow.bias = -0.0005;
+  scene.add(mainLight);
+
+  const fillLight = new THREE.DirectionalLight(0xbae6fd, 0.35);
+  fillLight.position.set(-40, 40, -30);
+  scene.add(fillLight);
+
+  initMaterials();
+
+  gfGroup = new THREE.Group();
+  ffGroup = new THREE.Group();
+  roofGroup = new THREE.Group();
+  columnGroup = new THREE.Group();
+  blueprintGroup = new THREE.Group();
+
+  scene.add(gfGroup);
+  scene.add(ffGroup);
+  scene.add(roofGroup);
+  scene.add(columnGroup);
+  scene.add(blueprintGroup);
+
+  buildSiteAndPlot();
+  build2DBlueprintOverlay();
+  buildGroundFloor();
+  buildFirstFloor();
+  buildRoof();
+  buildStructuralColumns();
+
+  setFloorMode('gf');
+
+  window.addEventListener('resize', onResize);
+  animate();
+}
+
+function initMaterials() {
+  mats.extWall = new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.35, transparent: true, opacity: 1 });
+  mats.intWall = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, roughness: 0.45, transparent: true, opacity: 1 });
+  mats.poojaWall = new THREE.MeshStandardMaterial({ color: 0xfef08a, roughness: 0.35, transparent: true, opacity: 1 });
+  mats.plinth = new THREE.MeshStandardMaterial({ color: 0xcbd5e1, roughness: 0.65 });
+  mats.slabFloor = new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.6 });
+  mats.wood = new THREE.MeshStandardMaterial({ color: 0x78350f, roughness: 0.42 });
+  mats.gold = new THREE.MeshStandardMaterial({ color: 0xd97706, metalness: 0.5, roughness: 0.3 });
+  mats.glass = new THREE.MeshPhysicalMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.38, roughness: 0.1 });
+  mats.granite = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.25, metalness: 0.2 });
+  mats.white = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3 });
+  mats.fabric = new THREE.MeshStandardMaterial({ color: 0x475569, roughness: 0.8 });
+  mats.column = new THREE.MeshStandardMaterial({ color: 0xef4444, roughness: 0.3, metalness: 0.15 });
+  transparentWalls.push(mats.extWall, mats.intWall, mats.poojaWall);
+}
+
+// ============================================================================
+// 1. SITE & 30'x60' PLOT BOUNDARY
+// ============================================================================
+function buildSiteAndPlot() {
+  const ground = new THREE.Mesh(
+    new THREE.PlaneGeometry(240, 240),
+    new THREE.MeshStandardMaterial({ color: 0x090d16, roughness: 0.95 })
+  );
+  ground.rotation.x = -Math.PI / 2;
+  ground.position.y = -0.25;
+  ground.receiveShadow = true;
+  scene.add(ground);
+
+  const grid = new THREE.GridHelper(140, 140, 0x1e293b, 0x111827);
+  grid.position.y = -0.2;
+  scene.add(grid);
+
+  // 30' x 60' Plot Slab (X: -15 to +15, Z: -30 to +30)
+  const plotSlab = new THREE.Mesh(
+    new THREE.BoxGeometry(30, 0.3, 60),
+    new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.85 })
+  );
+  plotSlab.position.set(0, -0.05, 0);
+  plotSlab.receiveShadow = true;
+  scene.add(plotSlab);
+
+  // Low Perimeter Compound Wall with Open East Front Gate
+  const compMat = new THREE.MeshStandardMaterial({ color: 0x475569, roughness: 0.65 });
+  const ch = 3.2;
+  addBox(scene, 30, ch, 0.4, 0, ch / 2, -30, compMat);   // West Rear boundary
+  addBox(scene, 0.4, ch, 60, -15, ch / 2, 0, compMat);   // South Left boundary
+  addBox(scene, 0.4, ch, 60, 15, ch / 2, 0, compMat);    // North Right boundary
+}
+
+// ============================================================================
+// 2. EXACT 2D BLUEPRINT OVERLAY LINES ON SLAB
+// ============================================================================
+function build2DBlueprintOverlay() {
+  const yLine = 1.65;
+  const lineMat = new THREE.LineBasicMaterial({ color: 0x10b981, linewidth: 2 });
+  const dashMat = new THREE.LineBasicMaterial({ color: 0xfacc15, linewidth: 1.5 });
+
+  function drawLine(x1, z1, x2, z2, mat = lineMat) {
+    const pts = [new THREE.Vector3(x1, yLine, z1), new THREE.Vector3(x2, yLine, z2)];
+    const geo = new THREE.BufferGeometry().setFromPoints(pts);
+    blueprintGroup.add(new THREE.Line(geo, mat));
+  }
+
+  // Outer Building Footprint (X: -12.12 to +12.11, Z: -27.0 to +25.83)
+  drawLine(-12.12, -27.0, 12.11, -27.0);
+  drawLine(-12.12, 25.83, 12.11, 25.83, dashMat);
+  drawLine(-12.12, -27.0, -12.12, 25.83);
+  drawLine(12.11, -27.0, 12.11, 25.83);
+
+  // Transverse Bay Lines: Z = -12.0, Z = 0.0, Z = +8.68, Z = +20.83, Z = +25.83
+  drawLine(-12.12, -12.0, 12.11, -12.0);
+  drawLine(-12.12, 0.0, 0.11, 0.0); // Dining / Kitchen wall
+  drawLine(-12.12, 8.68, 12.11, 8.68); // Front wall of Kitchen / Puja / Hall
+  drawLine(-12.12, 20.83, 12.11, 20.83); // 12'-02" Slab line
+
+  // Bay 1: Rear M.Bedroom (Left) & Two 6'x5' Toilets + Bedroom (Right)
+  drawLine(0.11, -27.0, 0.11, -12.0);
+  drawLine(0.11, -22.0, 12.11, -22.0);
+  drawLine(6.11, -27.0, 6.11, -22.0);
+
+  // Bay 2: Left U-Staircase & Dining + Center Archway
+  drawLine(0.11, -12.0, 0.11, 0.0, dashMat);
+  drawLine(-10.12, -9.5, -4.8, -9.5, dashMat);
+  drawLine(-10.12, -2.5, -4.8, -2.5, dashMat);
+  drawLine(-10.12, -9.5, -10.12, -2.5, dashMat);
+
+  // Bay 3: Kitchen (8'-0") & Puja (4'-2 3/4")
+  drawLine(0.11, 0.0, 0.11, 8.68);
+  drawLine(-4.12, 3.0, -4.12, 8.68);
+  drawLine(-4.12, 3.0, 0.11, 3.0);
+
+  blueprintGroup.visible = false;
+}
+
+// ============================================================================
+// 3. GROUND FLOOR (FAITHFUL TO LATEST SKETCH)
+// ============================================================================
+function buildGroundFloor() {
+  const y0 = 1.5;
+  const h = 10.0;
+
+  // Main Plinth (24.23' W x 52.83' L: X from -12.12 to +12.11, Z from -27.0 to +25.83)
+  const plinth = new THREE.Mesh(new THREE.BoxGeometry(24.23, 1.5, 52.83), mats.plinth);
+  plinth.position.set(0, 0.75, -0.585);
+  plinth.receiveShadow = true;
+  gfGroup.add(plinth);
+
+  // --- ROOM FLOOR TILES BY ZONE ---
+  // 1. Rear Bay (Z: -27.0 to -12.0, length = 15'-00")
+  // Left (SW): M. Bedroom (12'-2 3/4" W x 15'-00" L: X -12.12 to +0.11)
+  addTile(gfGroup, -6.0, -19.5, 12.23, 15.0, y0, 0xdbeafe);
+  // Right (NW): Two 6'-00" x 5'-00" Toilets at Rear (Z: -27.0 to -22.0)
+  addTile(gfGroup, 3.11, -24.5, 6.0, 5.0, y0, 0x7dd3fc);  // Inner 6'x5' Toilet
+  addTile(gfGroup, 9.11, -24.5, 6.0, 5.0, y0, 0x93c5fd);  // Outer 6'x5' Toilet
+  // Right (NW): Bedroom (12'-00" W x 10'-00" L: X +0.11 to +12.11, Z -22.0 to -12.0)
+  addTile(gfGroup, 6.11, -17.0, 12.0, 10.0, y0, 0xdcfce7);
+
+  // 2. Middle Bay (Z: -12.0 to 0.0, length = 12'-00")
+  // Left (South): Staircase + Dining (12'-2 3/4" W x 12'-00" L: X -12.12 to +0.11)
+  addTile(gfGroup, -6.0, -6.0, 12.23, 12.0, y0, 0xffedd5);
+
+  // 3. Kitchen & Puja Bay (Left/South, Z: 0.0 to +8.68, length = 8'-08 1/8")
+  // Kitchen (X: -12.12 to -4.12 [8'-00" W] + rear L-extension to +0.11)
+  addTile(gfGroup, -8.12, 4.34, 8.0, 8.68, y0, 0xfecaca);
+  addTile(gfGroup, -2.0, 1.5, 4.23, 3.0, y0, 0xfecaca);
+  // Puja Room (4'-2 3/4" W x 5'-8" L: X -4.12 to +0.11, Z +3.0 to +8.68)
+  addTile(gfGroup, -2.0, 5.84, 4.23, 5.68, y0, 0xfef08a);
+
+  // 4. Right (North) Continuous Hall (12'-00" W x 20'-08 1/8" L: X +0.11 to +12.11, Z -12.0 to +8.68)
+  addTile(gfGroup, 6.11, -1.66, 12.0, 20.68, y0, 0xf8fafc);
+
+  // 5. Front Portico / Slab Zone (Z: +8.68 to +25.83, total length = 17'-02")
+  // 12'-02" Main Front Slab Bay (Z: +8.68 to +20.83)
+  addTile(gfGroup, 0, 14.75, 24.23, 12.15, y0, 0xe2e8f0);
+  // 5'-00" Front Outer Slab Bay (Z: +20.83 to +25.83)
+  addTile(gfGroup, 0, 23.33, 24.23, 5.0, y0, 0xcbd5e1);
+
+  // --- EXTERIOR & INTERIOR WALLS (EXACT TO HAND-DRAWN PLAN) ---
+  // 1. West Rear Outer Wall (Z = -27.0, X: -12.12 to +12.11) -> Outside is -Z
+  addArchWall(gfGroup, -12.12, -27.0, 12.11, -27.0, y0, h, 0.65, mats.extWall, [
+    { pos: 0.25, w: 4.5, sill: 2.5, h: 4.5, type: 'window', sunshade: -1 }, // M. Bedroom West window
+    { pos: 0.62, w: 2.0, sill: 5.5, h: 2.0, type: 'window', sunshade: -1 }, // Toilet 1 ventilator
+    { pos: 0.88, w: 2.0, sill: 5.5, h: 2.0, type: 'window', sunshade: -1 }  // Toilet 2 ventilator
+  ]);
+
+  // 2. South (Left, దక్షిణం) Outer Wall (X = -12.12, Z: -27.0 to +8.68) -> Outside is -X (+local Z)
+  addArchWall(gfGroup, -12.12, -27.0, -12.12, 8.68, y0, h, 0.65, mats.extWall, [
+    { pos: 0.21, w: 4.5, sill: 2.5, h: 4.5, type: 'window', sunshade: 1 }, // M. Bedroom South window
+    { pos: 0.58, w: 4.0, sill: 3.2, h: 4.0, type: 'window', sunshade: 1 }, // Staircase South window
+    { pos: 0.88, w: 4.0, sill: 3.0, h: 4.0, type: 'window', sunshade: 1 }  // Kitchen South window
+  ]);
+
+  // 3. North (Right, ఉత్తరం) Outer Wall (X = +12.11, Z: -27.0 to +8.68) -> Outside is +X (-local Z)
+  addArchWall(gfGroup, 12.11, -27.0, 12.11, 8.68, y0, h, 0.65, mats.extWall, [
+    { pos: 0.28, w: 4.2, sill: 2.5, h: 4.5, type: 'window', sunshade: -1 }, // NW Bedroom North window
+    { pos: 0.58, w: 5.0, sill: 2.5, h: 4.5, type: 'window', sunshade: -1 }, // Hall North window 1
+    { pos: 0.86, w: 5.0, sill: 2.5, h: 4.5, type: 'window', sunshade: -1 }  // Hall North window 2
+  ]);
+
+  // 4. Rear Bay Interior Partitions (Z: -27.0 to -12.0)
+  // Center wall between M. Bedroom and NW Toilets/Bedroom (X = +0.11, Z: -27.0 to -12.0)
+  addArchWall(gfGroup, 0.11, -27.0, 0.11, -12.0, y0, h, 0.45, mats.intWall, [
+    { pos: 0.16, w: 2.5, sill: 0, h: 7.0, type: 'door' } // Attached Toilet door from M. Bedroom
+  ]);
+  // Wall between the two 6'-00" x 5'-00" Toilets (X = +6.11, Z: -27.0 to -22.0)
+  addArchWall(gfGroup, 6.11, -27.0, 6.11, -22.0, y0, h, 0.45, mats.intWall);
+  // Wall between the two 6'x5' Toilets and the 12'x10' Bedroom (Z = -22.0, X: +0.11 to +12.11)
+  addArchWall(gfGroup, 0.11, -22.0, 12.11, -22.0, y0, h, 0.45, mats.intWall, [
+    { pos: 0.78, w: 2.5, sill: 0, h: 7.0, type: 'door' } // Attached Toilet 2 door from NW Bedroom
+  ]);
+  // Transverse Wall separating Both Rear Bedrooms from Dining & Hall (Z = -12.0, X: -12.12 to +12.11)
+  addArchWall(gfGroup, -12.12, -12.0, 12.11, -12.0, y0, h, 0.45, mats.intWall, [
+    { pos: 0.38, w: 3.4, sill: 0, h: 7.0, type: 'door' }, // M. Bedroom Door into Dining
+    { pos: 0.62, w: 3.4, sill: 0, h: 7.0, type: 'door' }  // NW Bedroom Door into Hall
+  ]);
+
+  // 5. Middle Bay Center "Arch" Partition (X = +0.11, Z: -12.0 to 0.0)
+  // Wide open archway between Dining and Hall as marked "Arch" on the drawing
+  addArchWall(gfGroup, 0.11, -12.0, 0.11, 0.0, y0, h, 0.45, mats.intWall, [
+    { pos: 0.5, w: 8.5, sill: 0, h: 8.2, type: 'arch' }
+  ]);
+
+  // 6. Kitchen & Puja Room Walls (Z: 0.0 to +8.68)
+  // Wall between Dining/Stairs and Kitchen (Z = 0.0, X: -12.12 to +0.11)
+  addArchWall(gfGroup, -12.12, 0.0, 0.11, 0.0, y0, h, 0.45, mats.intWall, [
+    { pos: 0.72, w: 3.2, sill: 0, h: 7.0, type: 'door' } // Kitchen entry from Dining
+  ]);
+  // Center wall separating Kitchen/Puja from Hall (X = +0.11, Z: 0.0 to +8.68)
+  addArchWall(gfGroup, 0.11, 0.0, 0.11, 8.68, y0, h, 0.45, mats.intWall);
+  // Puja Room Enclosure (4'-2 3/4" wide: X = -4.12 to +0.11, Z = +3.0 to +8.68)
+  addArchWall(gfGroup, -4.12, 3.0, -4.12, 8.68, y0, h, 0.4, mats.poojaWall);
+  addArchWall(gfGroup, -4.12, 3.0, 0.11, 3.0, y0, h, 0.4, mats.poojaWall, [
+    { pos: 0.5, w: 2.6, sill: 0, h: 7.0, type: 'pooja_door' }
+  ]);
+
+  // 7. Front East House Wall at Z = +8.68 (Separating Kitchen, Puja & Hall from Front Portico Slab)
+  addArchWall(gfGroup, -12.12, 8.68, 12.11, 8.68, y0, h, 0.65, mats.extWall, [
+    { pos: 0.18, w: 4.0, sill: 3.0, h: 4.0, type: 'window' },    // Kitchen East Window
+    { pos: 0.64, w: 4.5, sill: 2.5, h: 4.5, type: 'window' },    // Hall East Front Window (Swapped)
+    { pos: 0.86, w: 3.8, sill: 0, h: 7.5, type: 'main_door' }    // Main Hall Entrance Door in NE (Swapped)
+  ]);
+
+  buildGroundFloorInteriors(y0);
+}
+
+// ============================================================================
+// 4. STAIRCASE (SOUTH LEFT BAY) & FURNITURE
+// ============================================================================
+function buildGroundFloorInteriors(y0) {
+  const stepMat = new THREE.MeshStandardMaterial({ color: 0xfde68a, roughness: 0.38 });
+  const railMat = new THREE.MeshStandardMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.45 });
+
+  // 1. U-Shaped Staircase on Left (South) Wall of Middle Bay (X: -12.12 to -4.8, Z: -12.0 to 0.0)
+  // Flight 1 (Along Z = -10.75, ascending from X = -5.2 toward South wall X = -10.12)
+  for (let i = 0; i < 6; i++) {
+    const hStep = (i + 1) * 0.55;
+    addBox(gfGroup, 0.85, hStep, 2.5, -5.2 - i * 0.85, y0 + hStep / 2, -10.75, stepMat);
+  }
+  // Landing 1 (South-West corner of stair bay: X -12.0 to -9.8, Z -12.0 to -9.5)
+  addBox(gfGroup, 2.2, 3.6, 2.5, -10.9, y0 + 1.8, -10.75, stepMat);
+
+  // Flight 2 (Along South outer wall X = -10.9, ascending from Z = -9.0 to -3.0)
+  for (let i = 0; i < 6; i++) {
+    const hStep = 3.6 + (i + 1) * 0.55;
+    addBox(gfGroup, 2.2, 0.55, 1.0, -10.9, y0 + hStep, -9.0 + i * 1.0, stepMat);
+  }
+  // Landing 2 (South-East corner of stair bay: X -12.0 to -9.8, Z -2.5 to 0.0)
+  addBox(gfGroup, 2.2, 0.65, 2.5, -10.9, y0 + 7.2, -1.25, stepMat);
+
+  // Flight 3 (Along Z = -1.25, ascending from X = -9.4 back toward Dining at X = -5.2)
+  for (let i = 0; i < 5; i++) {
+    const hStep = 7.2 + (i + 1) * 0.56;
+    addBox(gfGroup, 0.85, 0.55, 2.5, -9.4 + i * 0.85, y0 + hStep, -1.25, stepMat);
+  }
+
+  // Stair Balustrade
+  addBox(gfGroup, 5.0, 3.0, 0.12, -7.3, y0 + 5.0, -9.45, railMat);
+  addBox(gfGroup, 0.12, 3.0, 6.8, -9.75, y0 + 6.8, -6.0, railMat);
+  addBox(gfGroup, 5.0, 3.0, 0.12, -7.3, y0 + 8.8, -2.55, railMat);
+
+  // 2. Dining Table in Dining Zone (X: -3.2, Z: -6.0)
+  addBox(gfGroup, 3.2, 2.5, 5.0, -2.8, y0 + 1.25, -6.0, mats.wood);
+  addBox(gfGroup, 3.4, 0.18, 5.2, -2.8, y0 + 2.55, -6.0, mats.white);
+
+  // 3. M. Bedroom (SW: 12'-2 3/4" x 15'-00") Bed & Wardrobe
+  addBox(gfGroup, 6.2, 1.5, 5.8, -7.8, y0 + 0.75, -19.5, mats.wood);
+  addBox(gfGroup, 5.8, 0.5, 5.4, -7.6, y0 + 1.7, -19.5, mats.white);
+  addBox(gfGroup, 5.0, 7.0, 1.6, -5.5, y0 + 3.5, -26.0, mats.wood);
+
+  // 4. NW Bedroom (12'-00" x 10'-00") Bed & Two 6'x5' Toilets
+  addBox(gfGroup, 5.8, 1.5, 5.4, 8.2, y0 + 0.75, -17.0, mats.wood);
+  addBox(gfGroup, 5.4, 0.5, 5.0, 8.0, y0 + 1.7, -17.0, mats.white);
+  addBox(gfGroup, 1.8, 2.0, 1.4, 3.11, y0 + 1.0, -25.8, mats.white);
+  addBox(gfGroup, 1.8, 2.0, 1.4, 9.11, y0 + 1.0, -25.8, mats.white);
+
+  // 5. Kitchen L-Counter (SW Front: 8'-00" x 8'-08 1/8") & Puja Altar (4'-2 3/4")
+  addBox(gfGroup, 2.0, 2.8, 8.2, -11.0, y0 + 1.4, 4.34, mats.wood);
+  addBox(gfGroup, 2.1, 0.2, 8.4, -11.0, y0 + 2.9, 4.34, mats.granite);
+  addBox(gfGroup, 5.6, 2.8, 2.0, -7.2, y0 + 1.4, 7.5, mats.wood);
+  addBox(gfGroup, 5.8, 0.2, 2.1, -7.2, y0 + 2.9, 7.5, mats.granite);
+
+  // Puja Altar inside 4'-2 3/4" Puja box
+  addBox(gfGroup, 2.4, 2.2, 1.4, -2.0, y0 + 1.1, 7.4, mats.white);
+  addBox(gfGroup, 2.6, 0.2, 1.6, -2.0, y0 + 2.3, 7.4, mats.gold);
+
+  // 6. Continuous Hall (North Right Side: 12'-00" x 20'-08 1/8") Sofa & Coffee Table
+  addBox(gfGroup, 2.8, 1.6, 8.5, 10.0, y0 + 0.8, -1.5, mats.fabric);
+  addBox(gfGroup, 2.2, 1.1, 4.5, 6.2, y0 + 0.55, -1.5, mats.wood);
+}
+
+// ============================================================================
+// 5. FIRST FLOOR (+1 LEVEL) & FRONT SLAB TERRACE
+// ============================================================================
+function buildFirstFloor() {
+  const yFF = 11.5;
+  const hFF = 10.0;
+
+  // First Floor Slab with DOUBLE-HEIGHT DUPLEX CUTOUT over the Hall
+  // Includes a 4.0-ft wide bridge walkway along Z: -12.0 to -8.0 so you can walk from the stairs into the NW Upper Bedroom!
+  addBox(ffGroup, 24.23, 0.6, 15.0, 0, yFF - 0.3, -19.5, mats.plinth);       // Rear Bedrooms full-width slab (Z: -27.0 to -12.0)
+  addBox(ffGroup, 5.0, 0.6, 12.0, -2.39, yFF - 0.3, -6.0, mats.plinth);      // Upper Dining / Landing Walkway (X: -4.89 to +0.11, Z: -12.0 to 0.0)
+  addBox(ffGroup, 12.0, 0.6, 4.0, 6.11, yFF - 0.3, -10.0, mats.plinth);      // 4-ft Bridge Walkway into NW Upper Bedroom (X: +0.11 to +12.11, Z: -12.0 to -8.0)
+  addBox(ffGroup, 12.23, 0.6, 8.68, -6.0, yFF - 0.3, 4.34, mats.plinth);     // SE Slab over Kitchen & Puja (X: -12.12 to +0.11, Z: 0.0 to +8.68)
+  addBox(ffGroup, 24.23, 0.6, 17.15, 0, yFF - 0.3, 17.255, mats.plinth);     // Front Portico Slab (12'-02" + 5'-00" cantilever extension to Z = +25.83)
+
+  // Upper Floor Tiles (Including the L-shaped walkway & bridge into the NW Bedroom!)
+  addTile(ffGroup, -6.0, -19.5, 12.23, 15.0, yFF, 0xdbeafe);
+  addTile(ffGroup, 3.11, -24.5, 6.0, 5.0, yFF, 0x7dd3fc);
+  addTile(ffGroup, 9.11, -24.5, 6.0, 5.0, yFF, 0x93c5fd);
+  addTile(ffGroup, 6.11, -17.0, 12.0, 10.0, yFF, 0xdcfce7);
+  addTile(ffGroup, -2.39, -6.0, 4.8, 12.0, yFF, 0xffedd5); // Upper Walkway next to Duplex void
+  addTile(ffGroup, 6.11, -10.0, 12.0, 3.9, yFF, 0xffedd5); // Bridge Walkway to NW Upper Bedroom door
+  addTile(ffGroup, -6.0, 4.34, 12.23, 8.68, yFF, 0xfef08a);
+  addTile(ffGroup, 0, 14.755, 24.23, 12.15, yFF, 0xa7f3d0); // Front Open Terrace over the 12'-02" Slab
+  addTile(ffGroup, 0, 23.33, 24.23, 5.0, yFF, 0x6ee7b7);    // 5'-00" Cantilever Slab Extension (Z: +20.83 to +25.83)
+
+  // L-Shaped Interior Glass Balustrade overlooking the Double-Height Duplex Hall
+  addBox(ffGroup, 0.18, 3.4, 8.0, 0.11, yFF + 1.7, -4.0, mats.glass);  // Along X = +0.11 (Z: -8.0 to 0.0)
+  addBox(ffGroup, 12.0, 3.4, 0.18, 6.11, yFF + 1.7, -8.0, mats.glass); // Along Z = -8.0 bridge edge (X: +0.11 to +12.11)
+
+  // Upper Floor Walls (Matching Ground Floor Enclosed Footprint Z: -27.0 to +8.68)
+  addArchWall(ffGroup, -12.12, -27.0, 12.11, -27.0, yFF, hFF, 0.65, mats.extWall, [
+    { pos: 0.25, w: 4.5, sill: 2.5, h: 4.5, type: 'window', sunshade: -1 },
+    { pos: 0.62, w: 2.0, sill: 5.5, h: 2.0, type: 'window', sunshade: -1 },
+    { pos: 0.88, w: 2.0, sill: 5.5, h: 2.0, type: 'window', sunshade: -1 }
+  ]);
+  addArchWall(ffGroup, -12.12, -27.0, -12.12, 8.68, yFF, hFF, 0.65, mats.extWall, [
+    { pos: 0.21, w: 4.5, sill: 2.5, h: 4.5, type: 'window', sunshade: 1 },
+    { pos: 0.58, w: 4.0, sill: 3.2, h: 4.0, type: 'window', sunshade: 1 },
+    { pos: 0.88, w: 4.0, sill: 3.0, h: 4.0, type: 'window', sunshade: 1 }
+  ]);
+  addArchWall(ffGroup, 12.11, -27.0, 12.11, 8.68, yFF, hFF, 0.65, mats.extWall, [
+    { pos: 0.28, w: 4.2, sill: 2.5, h: 4.5, type: 'window', sunshade: -1 },
+    { pos: 0.58, w: 5.0, sill: 2.5, h: 4.5, type: 'window', sunshade: -1 },
+    { pos: 0.86, w: 5.0, sill: 2.5, h: 4.5, type: 'window', sunshade: -1 }
+  ]);
+
+  // Upper Rear Partitions
+  addArchWall(ffGroup, 0.11, -27.0, 0.11, -12.0, yFF, hFF, 0.45, mats.intWall, [
+    { pos: 0.16, w: 2.5, sill: 0, h: 7.0, type: 'door' }
+  ]);
+  addArchWall(ffGroup, 6.11, -27.0, 6.11, -22.0, yFF, hFF, 0.45, mats.intWall);
+  addArchWall(ffGroup, 0.11, -22.0, 12.11, -22.0, yFF, hFF, 0.45, mats.intWall, [
+    { pos: 0.78, w: 2.5, sill: 0, h: 7.0, type: 'door' }
+  ]);
+  addArchWall(ffGroup, -12.12, -12.0, 12.11, -12.0, yFF, hFF, 0.45, mats.intWall, [
+    { pos: 0.38, w: 3.4, sill: 0, h: 7.0, type: 'door' }, // Upper SW Bedroom Door
+    { pos: 0.62, w: 3.4, sill: 0, h: 7.0, type: 'door' }  // Upper NW Bedroom Door (accessed via the 4-ft bridge!)
+  ]);
+
+  // Upper South-East Room Partition along the Duplex Void (X = +0.11, Z: 0.0 to +8.68)
+  addArchWall(ffGroup, -12.12, 0.0, 0.11, 0.0, yFF, hFF, 0.45, mats.intWall, [
+    { pos: 0.72, w: 3.2, sill: 0, h: 7.0, type: 'door' }
+  ]);
+  addArchWall(ffGroup, 0.11, 0.0, 0.11, 8.68, yFF, hFF, 0.45, mats.intWall);
+
+  // Upper Front Wall at Z = +8.68 (High windows on the Duplex Hall side + terrace door on Left side)
+  addArchWall(ffGroup, -12.12, 8.68, 12.11, 8.68, yFF, hFF, 0.65, mats.extWall, [
+    { pos: 0.18, w: 4.0, sill: 2.5, h: 4.5, type: 'window' },
+    { pos: 0.38, w: 3.4, sill: 0, h: 7.5, type: 'main_door' },
+    { pos: 0.75, w: 6.5, sill: 2.5, h: 5.0, type: 'window' }
+  ]);
+
+  // Glass Railing around the Full Front Slab Terrace including the 5'-00" Cantilever (Z: +8.68 to +25.83)
+  addBox(ffGroup, 0.2, 3.4, 17.15, -12.0, yFF + 1.7, 17.255, mats.glass);
+  addBox(ffGroup, 0.2, 3.4, 17.15, 12.0, yFF + 1.7, 17.255, mats.glass);
+  addBox(ffGroup, 24.23, 3.4, 0.2, 0, yFF + 1.7, 25.73, mats.glass);
+}
+
+// ============================================================================
+// 6. ROOF & PORTICO PILLARS SUPPORTING THE 12'-02" & 5'-00" SLABS
+// ============================================================================
+function buildRoof() {
+  const yR = 21.5;
+  const roofMat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, roughness: 0.6 });
+
+  // Main Roof Slab over Enclosed Rooms (Z: -27.0 to +8.68)
+  addBox(roofGroup, 24.6, 0.8, 36.2, 0, yR + 0.4, -9.16, roofMat);
+
+  // Ground-to-First-Floor Corner Pillars supporting the 12'-02" Slab line (Z = +20.83, No middle pillar)
+  [-11.7, 11.7].forEach((x) => {
+    addBox(gfGroup, 0.9, 10.0, 0.9, x, 6.5, 20.83, mats.extWall);
+  });
+}
+
+// ============================================================================
+// 7. STRUCTURAL PILLARS (MATCHING THE CIRCLED DOTS ⊙ ON THE DRAWING)
+// ============================================================================
+function buildStructuralColumns() {
+  // Primary 3-Column X Grid: Left (-12.12), Center (+0.11), Right (+12.11)
+  // Front-most 3 pillars at Z = +25.83 removed (5'-00" slab is a pure cantilever)
+  // Middle pillar in second row (Z = +20.83, X = +0.11) removed
+  const colX = [-12.12, 0.11, 12.11];
+  const colZ = [-27.0, -12.0, 0.0, 8.68, 20.83];
+
+  colX.forEach((x) => {
+    colZ.forEach((z) => {
+      // Skip the middle pillar in the second row from front (Z = 20.83)
+      if (z === 20.83 && Math.abs(x - 0.11) < 0.5) return;
+
+      const isFrontSlab = z > 10.0;
+      const hCol = isFrontSlab ? 11.5 : 22.2;
+      const col = new THREE.Mesh(new THREE.BoxGeometry(0.85, hCol, 1.15), mats.column);
+      col.position.set(x, hCol / 2, z);
+      columnGroup.add(col);
+    });
+  });
+
+  columnGroup.visible = false;
+}
+
+// ============================================================================
+// 8. GEOMETRY & UI HELPERS
+// ============================================================================
+function addArchWall(group, x1, z1, x2, z2, yBase, height, thickness, material, openings = []) {
+  const length = Math.hypot(x2 - x1, z2 - z1);
+  const angle = -Math.atan2(z2 - z1, x2 - x1);
+
+  const container = new THREE.Group();
+  container.position.set(x1, yBase, z1);
+  container.rotation.y = angle;
+
+  openings.sort((a, b) => a.pos - b.pos);
+  let cursor = 0;
+
+  openings.forEach((op) => {
+    const center = op.pos * length;
+    const start = Math.max(cursor, center - op.w / 2);
+    const end = Math.min(length, center + op.w / 2);
+
+    if (start > cursor) {
+      const segW = start - cursor;
+      const seg = new THREE.Mesh(new THREE.BoxGeometry(segW, height, thickness), material);
+      seg.position.set(cursor + segW / 2, height / 2, 0);
+      seg.castShadow = true;
+      seg.receiveShadow = true;
+      container.add(seg);
+      scalableWalls.push(seg);
+    }
+
+    if (op.sill > 0) {
+      const sill = new THREE.Mesh(new THREE.BoxGeometry(op.w, op.sill, thickness), material);
+      sill.position.set(center, op.sill / 2, 0);
+      sill.castShadow = true;
+      container.add(sill);
+      scalableWalls.push(sill);
+    }
+
+    const topStart = op.sill + op.h;
+    if (topStart < height) {
+      const lintelH = height - topStart;
+      const lintel = new THREE.Mesh(new THREE.BoxGeometry(op.w, lintelH, thickness), material);
+      lintel.position.set(center, topStart + lintelH / 2, 0);
+      lintel.castShadow = true;
+      container.add(lintel);
+      scalableWalls.push(lintel);
+    }
+
+    if (op.type === 'window') {
+      const glass = new THREE.Mesh(new THREE.BoxGeometry(op.w, op.h, 0.12), mats.glass);
+      glass.position.set(center, op.sill + op.h / 2, 0);
+      container.add(glass);
+
+      // Exterior Sunshade (Chajja) for outside-facing windows (Top horizontal canopy only)
+      if (op.sunshade) {
+        const dir = op.sunshade; // +1 or -1 in local Z pointing outwards
+        const proj = 1.65;       // 1'-8" projection depth
+        const overhang = 0.8;    // 5" side extension on each side
+        const slabT = 0.28;
+        const zCenter = dir * (thickness / 2 + proj / 2);
+
+        // Top Horizontal Canopy Slab
+        const topHood = new THREE.Mesh(
+          new THREE.BoxGeometry(op.w + overhang, slabT, proj),
+          mats.plinth
+        );
+        topHood.position.set(center, op.sill + op.h + slabT / 2, zCenter);
+        topHood.castShadow = true;
+        topHood.receiveShadow = true;
+        container.add(topHood);
+      }
+    } else if (op.type === 'main_door' || op.type === 'pooja_door') {
+      const dMat = op.type === 'pooja_door' ? mats.gold : mats.wood;
+      const leaf = new THREE.Mesh(new THREE.BoxGeometry(op.w * 0.9, op.h * 0.95, 0.18), dMat);
+      leaf.position.set(center - op.w * 0.2, op.h / 2, 0.45);
+      leaf.rotation.y = 0.45;
+      container.add(leaf);
+    }
+
+    cursor = end;
+  });
+
+  if (cursor < length) {
+    const remW = length - cursor;
+    const rem = new THREE.Mesh(new THREE.BoxGeometry(remW, height, thickness), material);
+    rem.position.set(cursor + remW / 2, height / 2, 0);
+    rem.castShadow = true;
+    rem.receiveShadow = true;
+    container.add(rem);
+    scalableWalls.push(rem);
+  }
+
+  group.add(container);
+}
+
+function addTile(group, cx, cz, w, d, y, colorHex) {
+  const mesh = new THREE.Mesh(
+    new THREE.BoxGeometry(w - 0.18, 0.12, d - 0.18),
+    new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.5 })
+  );
+  mesh.position.set(cx, y + 0.06, cz);
+  mesh.receiveShadow = true;
+  group.add(mesh);
+}
+
+function addBox(parent, w, h, d, x, y, z, mat) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+  m.position.set(x, y, z);
+  m.castShadow = true;
+  m.receiveShadow = true;
+  parent.add(m);
+  return m;
+}
+
+// ============================================================================
+// 9. INTERACTIVE CONTROLS
+// ============================================================================
+function setFloorMode(mode) {
+  currentMode = mode;
+  ['gf', 'ff', 'full', 'xray'].forEach((m) => {
+    const btn = document.getElementById(`btn-${m}`);
+    if (m === mode) {
+      btn.className = 'px-3 py-1.5 rounded-lg text-xs font-medium transition bg-sky-500 text-slate-950 shadow';
+    } else {
+      btn.className = 'px-3 py-1.5 rounded-lg text-xs font-medium transition text-slate-300 hover:text-white';
+    }
+  });
+
+  const isXray = mode === 'xray';
+  transparentWalls.forEach((m) => {
+    m.opacity = isXray ? 0.22 : 1.0;
+  });
+
+  gfGroup.visible = true;
+  ffGroup.visible = mode !== 'gf';
+  roofGroup.visible = mode === 'full';
+  columnGroup.visible = isXray;
+}
+
+function toggleBlueprintOverlay() {
+  blueprintVisible = !blueprintVisible;
+  blueprintGroup.visible = blueprintVisible;
+  const btn = document.getElementById('btn-bp');
+  if (blueprintVisible) {
+    btn.className = 'px-3 py-1.5 rounded-lg text-xs font-medium transition bg-emerald-500 text-slate-950 shadow';
+    updateWallHeight(0.22);
+    document.getElementById('wall-slider').value = 0.22;
+  } else {
+    btn.className = 'px-3 py-1.5 rounded-lg text-xs font-medium transition text-emerald-400 hover:text-emerald-300 border border-emerald-500/30';
+    updateWallHeight(1.0);
+    document.getElementById('wall-slider').value = 1.0;
+  }
+}
+
+function updateWallHeight(val) {
+  const s = parseFloat(val);
+  scalableWalls.forEach((w) => {
+    w.scale.y = s;
+    w.position.y = (w.geometry.parameters.height * s) / 2;
+  });
+}
+
+function updateExplode(val) {
+  explodeAmount = parseFloat(val);
+  ffGroup.position.y = explodeAmount;
+  roofGroup.position.y = explodeAmount * 1.65;
+}
+
+function setCam(preset) {
+  if (preset === 'iso') {
+    camera.position.set(52, 54, 62);
+    controls.target.set(0, 4, 0);
+  } else if (preset === 'top') {
+    camera.position.set(0, 90, 0.01);
+    controls.target.set(0, 0, 0);
+  } else if (preset === 'front') {
+    camera.position.set(0, 24, 82);
+    controls.target.set(0, 5, 0);
+  } else if (preset === 'rear') {
+    camera.position.set(0, 26, -82);
+    controls.target.set(0, 5, 0);
+  }
+  controls.update();
+}
+
+function onResize() {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+}
+
+window.onload = init;
+</script>
+</body>
+</html>
